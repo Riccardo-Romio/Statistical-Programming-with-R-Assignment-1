@@ -1,0 +1,168 @@
+---
+title: "Assignment 1"
+output: html_document
+date: "2023-11-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(matlib)
+library(methods)
+library(ggplot2)
+library(readr)
+library(dplyr)
+
+AQI <- read_csv("AQI.csv")
+Pollution <- read_csv("Pollution.csv")
+Weather <- read_csv("Weather.csv")
+```
+## Creating the Class and Methods
+```{r}
+setClass( #Creating a Class of type linear_regression, so that we may later use it
+  "linear_regression",
+  representation(
+    beta = "matrix",
+    se = "numeric",
+    residuals = "matrix",
+    fitted = "matrix",
+    sigma = "numeric",
+    dep = "character",
+    indep = "character",
+    y = "matrix"
+  )
+)
+
+setMethod( #print method for linear_regression object
+  "print",
+  signature = "linear_regression",
+  function(x) {
+    print(rbind(x@beta[,1], x@se))
+  }
+)
+
+setMethod( #plot method for linear_regression object
+  "plot",
+  signature = "linear_regression",
+  function(x){
+    data = data.frame( #Creating new dataset with ordered data
+      sortedReal = sort(x@y),
+      sortedFitted = c(x@fitted),
+      index = seq(1:length(x@y))
+  
+    )
+    
+    ggplot(data) + 
+      geom_point(aes(x = index, y = sortedReal, color = "Real Data")) + 
+      geom_point(aes(x = index, y = sortedFitted, color = "Fitted Data")) + 
+      labs(title = "Actual and Fitted Values (sorted)",
+        y = "Value",
+        x = "Order") +
+      scale_color_manual(name = "Data", values = c("Real Data" = "blue", "Fitted Data" = "maroon"))
+  }
+)
+```
+## Linear Regression Function
+```{r}
+linear_regression <- function(data, dep, indep, intercept = TRUE){ #function to perform linear regression
+  
+  #Subsetting data from the original dataset
+  colNames = c(dep, indep)
+  subset = data[, colNames]
+  
+  #Defining the matrices to perform operations on
+  y = as.matrix(select(subset, c(1))) #apply(as.matrix(select(subset, c(1))), c(1,2), as.numeric)
+  X = as.matrix(select(subset, -c(1))) #apply(as.matrix(select(subset, -c(1))), c(1,2), as.numeric)
+  
+  # Checking wherther an intercept should be included in the model and making appropriate changes to the matrices
+  if(intercept){
+    interceptVec = rep(1, times = length(X[,1]))
+    X = cbind(intercept, X)
+    indep = c("intercept", indep)
+  }
+  
+  #Storing items that will be used more than once
+  tX = t(X)
+  XtXInv = solve(tX %*% X)
+  
+  #Calculating the vector of coefficients
+  beta = (XtXInv %*% tX) %*% y
+  
+  #Calculating the vectors of estimates and the residual difference from real obtained valus
+  fitted = X %*% beta
+  residuals = y - fitted
+
+  #Calculating Variance-Covariance Matrix to obtain the standard errors
+  sumError = 0
+  for(i in residuals){
+    sumError = sumError + i^2
+  }
+  sigma = sumError/(length(X[,1]) - length(X[1,]))
+  
+  varCovar = sigma * XtXInv
+  
+  print(varCovar)
+  
+  se = sqrt(diag(varCovar))
+  
+  #Creating a new object of class linear_regression 
+  obj <- new("linear_regression", beta = beta, se = se, residuals = residuals, fitted = fitted, sigma = sqrt(sigma), 
+             dep = dep, indep = indep, y = y)
+  
+  return(obj)
+}
+```
+
+```{r}
+finalPollutionOzone = Pollution %>% 
+    filter(`Local Site Name` == "Clinton") %>% 
+  select(`Parameter Name`, `Date Local`, `Arithmetic Mean`) %>% 
+  filter(`Parameter Name` == "Ozone") %>% 
+  rename("Ozone Levels (PPM)" = `Arithmetic Mean`) %>% 
+  select(`Date Local`, `Ozone Levels (PPM)`) %>% 
+  mutate(`Ozone Levels (PPM)` = `Ozone Levels (PPM)` * 1000) %>% 
+  rename("Date" = `Date Local`, "Ozone Levels (PPB)" = `Ozone Levels (PPM)`)
+
+finalPollutionNO2 = Pollution %>% 
+    filter(`Local Site Name` == "Clinton") %>% 
+  select(`Parameter Name`, `Date Local`, `Arithmetic Mean`) %>% 
+  filter(`Parameter Name` == "Nitrogen dioxide (NO2)") %>% 
+  rename("NO2 Levels (PPB)" = `Arithmetic Mean`) %>% 
+  select(`Date Local`, `NO2 Levels (PPB)`) %>% 
+  rename("Date" = `Date Local`)
+
+finalWeatherTemp = Weather %>% 
+    filter(`Local Site Name` == "Clinton") %>% 
+  select(`Date Local`, `Units of Measure`, `Arithmetic Mean`) %>% 
+  filter(`Units of Measure` == "Degrees Fahrenheit") %>% 
+  rename("Temperature (F)" = `Arithmetic Mean`) %>% 
+  select(`Date Local`, `Temperature (F)`) %>% 
+  rename("Date" = `Date Local`)
+  
+finalWeatherWind = Weather %>% 
+    filter(`Local Site Name` == "Clinton") %>% 
+  select(`Date Local`, `Units of Measure`, `Arithmetic Mean`) %>% 
+  filter(`Units of Measure` == "Knots") %>% 
+  rename("Wind Speed (Knots)" = `Arithmetic Mean`) %>% 
+  select(`Date Local`, `Wind Speed (Knots)`) %>% 
+  rename("Date" = `Date Local`)
+
+finalAQI = AQI %>% 
+    filter(`county Name` == "Harris") %>% 
+  select(-`...1`, -`State Name`, -`county Name`, -`State Code`, -`County Code`, -`Defining Site`, -`Number of Sites Reporting`)
+
+finalData = inner_join(finalPollutionOzone, finalPollutionNO2, by = "Date") %>% 
+  inner_join(finalWeatherTemp, by = "Date") %>% 
+  inner_join(finalWeatherWind, by = "Date") %>% 
+  inner_join(finalAQI, by = "Date")
+
+ggplot(finalData) +
+  geom_point(aes(x = `Date`, y = `Ozone Levels (PPB)`), color = "purple", size = 0.7) + 
+  geom_smooth(aes(x = `Date`, y = `Ozone Levels (PPB)`), color = "purple",method  ="lm", formula = y ~ poly(x, 4)) +
+  geom_point(aes(x = `Date`, y = `NO2 Levels (PPB)`), color = "orange", size = 0.7) + 
+  geom_smooth(aes(x = `Date`, y = `NO2 Levels (PPB)`), color = "orange", method = "lm", formula = y ~ poly(x, 4)) +
+  geom_point(aes(x = `Date`, y = `Temperature (F)`), color = "magenta", size = 0.7) +
+  geom_smooth(aes(x = `Date`, y = `Temperature (F)`), color = "magenta", method = "lm", formula = y ~ poly(x, 4)) +
+  geom_point(aes(x = `Date`, y = `Wind Speed (Knots)`), color = "green", size = 0.7) +
+  geom_smooth(aes(x = `Date`, y = `Wind Speed (Knots)`), color = "green", method = "lm", formula = y ~ poly(x, 4))
+```

@@ -1,0 +1,7 @@
+a <- c(1,2)
+b <- c("Hi","K")
+ab <- cbind(a,b)
+class(ab)
+class(ab[1])
+x <- c(3,4,5)
+sqrt(sum(x-mean(x)^2)/(length(x)-1))
